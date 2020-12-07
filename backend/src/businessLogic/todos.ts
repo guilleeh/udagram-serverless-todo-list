@@ -1,27 +1,14 @@
 import * as AWS from 'aws-sdk'
-import * as AWSXRay from 'aws-xray-sdk'
 import * as uuid from 'uuid'
-import { DocumentClient } from 'aws-sdk/clients/dynamodb'
 import { CreateTodoRequest } from '../requests/CreateTodoRequest'
-// import { config } from '../../config'
 import { TodoItem } from '../models/TodoItem'
 import { TodoUpdate } from '../models/TodoUpdate'
-import { createLogger } from '../utils/logger'
+import Todos from '../dataLayer/todos'
+import Files from '../dataLayer/files'
 
-const logger = createLogger('generateUploadUrl')
+const TodosAccess = new Todos()
+const FilesAccess = new Files()
 
-
-
-const XAWS = AWSXRay.captureAWS(AWS)
-
-const todosTable: string = process.env.TODOS_TABLE
-const createdAtIndex: string = process.env.CREATED_AT_INDEX
-const docClient: DocumentClient = new XAWS.DynamoDB.DocumentClient()
-const s3Client: AWS.S3 = new XAWS.S3({
-  signatureVersion: 'v4'
-})
-const s3Bucket = process.env.FILES_S3_BUCKET
-const signedUrlExpireSeconds = 60 * 5
 
 export const createTodo = async (userId: string, createTodoRequest: CreateTodoRequest): Promise<TodoItem> => {
   const id = uuid.v4()
@@ -33,26 +20,13 @@ export const createTodo = async (userId: string, createTodoRequest: CreateTodoRe
     done: false,
     ...createTodoRequest
   }
-
-  await docClient.put({
-    TableName: todosTable,
-    Item: newTodoItem
-  }).promise()
-
+  await TodosAccess.createTodo(newTodoItem)
   return newTodoItem
 }
 
 export const getTodos = async (userId: string): Promise<AWS.DynamoDB.DocumentClient.ItemList> => {
-  const result = await docClient.query({
-    TableName: todosTable,
-    IndexName: createdAtIndex,
-    KeyConditionExpression: 'userId = :userId',
-    ExpressionAttributeValues: {
-      ':userId': userId
-    }
-  }).promise()
 
-  const items: AWS.DynamoDB.DocumentClient.ItemList = result.Items
+  const items = await TodosAccess.getTodos(userId)
   for (const item of items) {
     const url = await getAttachmentsUrl(item.todoId)
     if (url) {
@@ -63,69 +37,22 @@ export const getTodos = async (userId: string): Promise<AWS.DynamoDB.DocumentCli
   return items
 }
 
-export const getSingleTodo = async (userId: string, todoId: string): Promise<AWS.DynamoDB.QueryOutput> => {
-  return await docClient.query({
-    TableName: todosTable,
-    KeyConditionExpression: 'userId = :user and todoId = :todo',
-    ExpressionAttributeValues: {
-      ':user': userId,
-      ':todo': todoId
-    }
-  }).promise()
+export async function getSingleTodo(userId: string, todoId: string): Promise<AWS.DynamoDB.QueryOutput> {
+  return await TodosAccess.getSingleTodo(userId, todoId)
 }
 
-export const updateTodo = async (userId: string, todoId: string, updatedTodo: TodoUpdate): Promise<void> => {
-  await docClient.update({
-    TableName: todosTable,
-    Key: {
-      userId,
-      todoId
-    },
-    UpdateExpression: 'SET #name = :n, dueDate = :due, done = :d',
-    ExpressionAttributeValues: {
-      ":n": updatedTodo.name,
-      ":due": updatedTodo.dueDate,
-      ":d": updatedTodo.done
-    },
-    ExpressionAttributeNames: {
-      "#name": "name"
-    }
-  }).promise()
+export async function updateTodo(userId: string, todoId: string, updatedTodo: TodoUpdate): Promise<void> {
+  return await TodosAccess.updateTodo(userId, todoId, updatedTodo)
 }
 
 export const deleteTodo = async (userId: string, todoId: string): Promise<void> => {
-  await docClient.delete({
-    TableName: todosTable,
-    Key: {
-      userId,
-      todoId
-    }
-  }).promise()
+  return await TodosAccess.deleteTodo(userId, todoId)
 }
 
-export const getAttachmentsUrl = async (todoId: string): Promise<string | null> => {
-  try {
-    await s3Client.headObject({
-      Bucket: s3Bucket,
-      Key: `${todoId}.png`
-    }).promise()
-    const url = s3Client.getSignedUrl('getObject', {
-      Bucket: s3Bucket,
-      Key: `${todoId}.png`,
-      Expires: signedUrlExpireSeconds
-    })
-    logger.info('Url created: ', { url })
-    return url
-  } catch (error) {
-    logger.info('An error occurred: ', { error })
-    return null
-  }
+export const getAttachmentsUrl = async (todoId: string): Promise<string> => {
+  return await FilesAccess.getAttachmentsUrl(todoId)
 }
 
-export const getPresignedUrl = (todoId: string): string => {
-  return s3Client.getSignedUrl('putObject', {
-    Bucket: s3Bucket,
-    Key: `${todoId}.png`,
-    Expires: signedUrlExpireSeconds
-  })
+export const getPresignedUrl = (todoId: string): string | null => {
+  return FilesAccess.getPresignedUrl(todoId)
 }
