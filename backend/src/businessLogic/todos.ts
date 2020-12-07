@@ -114,10 +114,10 @@ export const getAttachmentsUrl = async (todoId: string): Promise<string | null> 
       Key: `${todoId}.png`,
       Expires: signedUrlExpireSeconds
     })
-    logger.info(url)
+    logger.info('Url created: ', { url })
     return url
   } catch (error) {
-    logger.info(error)
+    logger.info('An error occurred: ', { error })
     return null
   }
 }
